@@ -307,6 +307,9 @@ static char **sp_file_table;   /* id -> path; defined with the map builder below
 int g_load_model_graph = 0;
 /* The selected backend supplies its engine name before frontend pruning. */
 const char *sp_parse_ruby_engine = "spinel";
+static int sp_no_builtin_sources(void) {
+  return strcmp(sp_parse_ruby_engine, "kah") == 0 || getenv("SPINEL_NO_BUILTINS") != NULL;
+}
 /* --load-model=graph: the file being flattened, as the table's file list
    has it (0 is the entry); set with g_parser for each file */
 static int g_flat_file = 0;
@@ -6385,7 +6388,7 @@ static char *sp_splice_io_popen(char *source, const char *exe_path,
 
 static char *sp_splice_builtins(char *source, const char *exe_path,
                                 unsigned char **fsl, size_t *fsl_n) {
-  if (getenv("SPINEL_NO_BUILTINS")) return source;   /* the A/B switch: the C emitters alone */
+  if (sp_no_builtin_sources()) return source;   /* the A/B switch: the C emitters alone */
   if (sp_builtin_enum_names_n == 0) {
     char lib_dir[1024], gp[1200];
     sp_lib_dir(exe_path, lib_dir, sizeof lib_dir);
@@ -6439,7 +6442,7 @@ static char *sp_splice_builtins(char *source, const char *exe_path,
    just never splices, and the calls stay on their typed emitters. */
 static char *sp_splice_builtin_enumerator(char *source, const char *exe_path,
                                           unsigned char **fsl, size_t *fsl_n) {
-  if (getenv("SPINEL_NO_BUILTINS")) return source;
+  if (sp_no_builtin_sources()) return source;
   /* a String's piece walk with an index (str.each_char.with_index { }),
      which builtins/enumerator.rb's __enumw_str_*_with_index serve when the
      String is no variable to read again after the walk */
@@ -6522,7 +6525,7 @@ static char *sp_splice_builtin_extra(char *source, const char *exe_path, SpBuilt
 
 static char *sp_splice_builtin_extras(char *source, const char *exe_path,
                                        unsigned char **fsl, size_t *fsl_n) {
-  if (getenv("SPINEL_NO_BUILTINS")) return source;
+  if (sp_no_builtin_sources()) return source;
   for (int i = 0; i < SP_BUILTIN_EXTRA_N; i++)
     source = sp_splice_builtin_extra(source, exe_path, &sp_builtin_extras[i], fsl, fsl_n);
   return source;
@@ -8544,7 +8547,7 @@ static int sp_graph_boot(SpLoadGraph *g, const char *source_file, SpNames *facts
   SpBootLib *libs = NULL;
   int nlib = 0, cap = 0;
   char dir[1024];
-  int no_builtins = getenv("SPINEL_NO_BUILTINS") != NULL, have_enum = 0;
+  int no_builtins = sp_no_builtin_sources(), have_enum = 0;
   /* builtins/: every file, in name order */
   if (!no_builtins && sp_builtins_dir(g->lib_dir, dir, sizeof dir)) {
     DIR *d = opendir(dir);
@@ -8728,7 +8731,7 @@ static void sp_load_order_dump(const SpLoadGraph *g) {
    reads them (sp_splice_builtins), whether the program loads the files or
    not. */
 static void sp_graph_builtin_names(const char *lib_dir) {
-  if (getenv("SPINEL_NO_BUILTINS")) return;
+  if (sp_no_builtin_sources()) return;
   char found[1024];
   if (sp_builtin_enum_names_n == 0 &&
       sp_lib_lookup(lib_dir, "builtins/enumerable", found, sizeof found) == SP_LIB_BUILTIN) {

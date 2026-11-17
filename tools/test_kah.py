@@ -339,6 +339,16 @@ def main():
         original = rb.read_text()
         assert run([COMPILER, rb, '-o', rb, '--force']).returncode != 0
         assert rb.read_text() == original
+        standalone = work / 'kah'
+        shutil.copyfile(COMPILER.resolve(), standalone)
+        standalone.chmod(0o755)
+        standalone_env = os.environ.copy()
+        standalone_env['PATH'] = '/usr/bin:/bin'
+        standalone_lua = work / 'standalone.lua'
+        assert_ok(run([standalone, rb, '-o', standalone_lua], env=standalone_env), 'standalone compiler without Ruby or builtin files')
+        for vm in vms:
+            result = run([vm, standalone_lua]); assert_ok(result, 'standalone output')
+            assert result.stdout == b'kah\n[]\n', result.stdout
         inline = work / 'inline.lua'
         assert_ok(run([COMPILER, '-e', 'puts 42', '-o', inline]), 'inline output')
         assert inline.exists()
