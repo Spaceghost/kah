@@ -1,3 +1,27 @@
+# Kah — Ruby in Lua's orbit
+
+Kah compiles a Ruby subset to Lua and LuaJIT, using **Prism** and a new Lua
+backend built on **matz/spinel**. The generated Lua file includes its Ruby
+compatibility runtime. This is an early prototype, not a complete Ruby.
+
+```sh
+git clone https://github.com/Spaceghost/kah.git
+cd kah
+make deps
+make -j4 kah
+./bin/kah examples/kah/hello.rb -o hello.lua
+lua hello.lua
+luajit hello.lua
+```
+
+Read [the Kah guide](docs/kah.md) for supported Ruby, Lua interoperability,
+installation, testing, and current limitations. Website: <https://spacegho.st/kah/>.
+
+The original Spinel documentation follows; its native performance numbers and
+native Ruby coverage do not describe Kah's Lua backend.
+
+---
+
 # Spinel -- Ruby AOT Compiler
 
 Spinel compiles Ruby source code into standalone native executables.

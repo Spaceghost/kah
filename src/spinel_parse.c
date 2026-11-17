@@ -305,6 +305,8 @@ static char **sp_file_table;   /* id -> path; defined with the map builder below
 
 /* --load-model=graph: a require is a LoadNode (sp_flatten_call_as, below) */
 int g_load_model_graph = 0;
+/* The selected backend supplies its engine name before frontend pruning. */
+const char *sp_parse_ruby_engine = "spinel";
 /* --load-model=graph: the file being flattened, as the table's file list
    has it (0 is the entry); set with g_parser for each file */
 static int g_flat_file = 0;
@@ -3688,7 +3690,7 @@ static int sp_pm_name_is(const pm_parser_t *parser, pm_constant_id_t id, const c
 
 /* The truth of a predicate the splice can settle without the analyzer:
    1 / 0 for a literal or a settled RUBY_ENGINE comparison, -1 otherwise.
-   RUBY_ENGINE is "spinel" in every program spinel compiles, so
+   RUBY_ENGINE is settled by the backend ("spinel" or "kah"), so
    `RUBY_ENGINE == "x"` (either operand order), its `!=` and a `!` around
    either are constants too. The analyzer drops the branch such a check rules
    out before anything in it is compiled (desugar_engine_branches), but the
@@ -3748,7 +3750,8 @@ static int sp_require_truth(const pm_parser_t *parser, const pm_node_t *node, in
       else return -1;
       if (!sp_pm_name_is(parser, ((const pm_constant_read_node_t *)cst)->name, "RUBY_ENGINE")) return -1;
       const pm_string_t *s = &((const pm_string_node_t *)lit)->unescaped;
-      int same = pm_string_length(s) == 6 && memcmp(pm_string_source(s), "spinel", 6) == 0;
+      size_t engine_len = strlen(sp_parse_ruby_engine);
+      int same = pm_string_length(s) == engine_len && memcmp(pm_string_source(s), sp_parse_ruby_engine, engine_len) == 0;
       return eq ? same : !same;
     }
     default: return -1;

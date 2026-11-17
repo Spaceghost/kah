@@ -23,6 +23,7 @@
 #include "implicit_calls.h"
 #include "spinel_rev.h"
 #include "codegen.h"
+#include "codegen_lua.h"
 #include "analyze.h"
 #include "repr.h"
 #include "share.h"
@@ -53,6 +54,7 @@ extern int g_strict_require_cli;
 extern int g_dump_load_graph;
 extern int g_load_model_graph;
 extern int sp_parse_reported;
+extern const char *sp_parse_ruby_engine;
 /* RUBY_DESCRIPTION for the compiled program, in the `ruby -v` shape:
    "spinel <RUBY_VERSION> (<release> revision <rev>)" (codegen appends the
    platform). The version word is the one RUBY_VERSION and
@@ -483,7 +485,20 @@ static int cc_is_clang(const char *cc_cmd) {
   return answer;
 }
 
+static int g_kah_cli;
 static void usage(void) {
+  if (g_kah_cli) {
+    fprintf(stderr, "Kah 0.1.0 — Ruby to Lua/LuaJIT, with Prism and Spinel\n\n"
+      "Usage: kah app.rb -o app.lua    compile Ruby to portable Lua\n"
+      "       kah -E app.rb a b        compile and run with Lua\n"
+      "       kah --target=luajit -E app.rb  run with LuaJIT\n"
+      "       kah app.rb -S           print generated Lua\n\n"
+      "Options: -o FILE, -S, -E, -e SOURCE, -I DIR, --lua=PATH, --force\n"
+      "         --target=lua|luajit|native|wasm32-wasi, --version, --help\n"
+      "Lua options must precede the source when using -E.\n"
+      "Kah is an early Ruby subset; see docs/kah.md for its limits.\n");
+    return;
+  }
   fprintf(stderr,
     "Spinel AOT Compiler\n\n"
     "Usage: spinel app.rb              - compile to ./app\n"
@@ -495,6 +510,8 @@ static void usage(void) {
     "       spinel -E app.rb a b c     - compile + run with ARGV=[a, b, c]\n\n"
     "Options:\n"
     "  -o FILE     Output file\n"
+    "  --target=lua|luajit  Emit portable Lua (Kah backend)\n"
+    "  --lua=PATH  Lua interpreter for -E (default lua, or luajit)\n"
     "  --link ARG  Extra link input (object/archive/-lLIB); repeatable\n"
     "  -v, --version  Print the compiler version and build revision\n"
     "  -c          C source only (don't compile)\n"
@@ -956,6 +973,11 @@ int main(int argc, char **argv) {
   /* --target=wasm32-wasi: the program is a WebAssembly module for a WASI
      host (wasmtime, Node's WASI, a browser shim), built by the wasi-sdk's
      clang against the runtime archive in lib/wasm32-wasi/. */
+  const char *invoked = strrchr(argv[0], '/');
+  invoked = invoked ? invoked + 1 : argv[0];
+  g_kah_cli = sp_streq(invoked, "kah");
+  int target_lua = g_kah_cli ? 1 : 0;
+  const char *lua_cmd = NULL;
   int target_wasi = 0;
   /* --exceptions=abort (wasm32-wasi only): a runtime without setjmp/longjmp,
      for a host that has no exception-handling proposal. A raise traps; the
@@ -982,14 +1004,16 @@ int main(int argc, char **argv) {
     const char *a = argv[i];
     if (!strncmp(a, "--source=", 9))      { source = a + 9; i++; }
     else if (!strncmp(a, "--output=", 9)) { output = a + 9; i++; }
+    else if (!strncmp(a, "--lua=", 6)) { lua_cmd = a + 6; i++; }
     else if (!strncmp(a, "--cc=", 5))     { cc_cmd = a + 5; i++; }
     else if (!strncmp(a, "--jobs=", 7))   { cc_jobs = atoi(a + 7); i++; }
     else if (!strncmp(a, "--split-parts=", 14)) { g_split_parts = atoi(a + 14); i++; }
     else if (incremental_opt(a))           { i++; }
     else if (!strncmp(a, "--target=", 9)) {
-      if (sp_streq(a + 9, "wasm32-wasi")) target_wasi = 1;
-      else if (sp_streq(a + 9, "native")) target_wasi = 0;
-      else { fprintf(stderr, "spinel: unknown --target %s (wasm32-wasi or native)\n", a + 9); return 1; }
+      if (sp_streq(a + 9, "wasm32-wasi")) { target_wasi = 1; target_lua = 0; }
+      else if (sp_streq(a + 9, "native")) { target_wasi = 0; target_lua = 0; }
+      else if (sp_streq(a + 9, "lua") || sp_streq(a + 9, "luajit")) { target_wasi = 0; target_lua = sp_streq(a + 9, "luajit") ? 2 : 1; }
+      else { fprintf(stderr, "spinel: unknown --target %s (native, wasm32-wasi, lua or luajit)\n", a + 9); return 1; }
       i++;
     }
     else if (!strncmp(a, "--gc=", 5) || sp_streq(a, "--no-gc")) {
@@ -1099,7 +1123,10 @@ int main(int argc, char **argv) {
     /* `-v` is the `ruby -v` spelling, so a tool that asks every Ruby it
        drives for its version the same way (ruby/ruby-bench does) gets
        an answer instead of the usage text. */
-    else if (sp_streq(a, "--version") || sp_streq(a, "-v")) return print_version(cc_cmd);
+    else if (sp_streq(a, "--version") || sp_streq(a, "-v")) {
+      if (g_kah_cli) { printf("kah 0.1.0 (Prism frontend; Spinel %s)\n", SPINEL_BUILD_REV); return 0; }
+      return print_version(cc_cmd);
+    }
     else if (sp_streq(a, "-e")) {
       if (++i < argc) {
         if (eval_used) s_add(&eval_src, "\n");
@@ -1357,6 +1384,7 @@ int main(int argc, char **argv) {
   else target_i386 = 1;
 #endif
   double tm_front = sp_timing_now();
+  sp_parse_ruby_engine = target_lua ? "kah" : "spinel";
   NodeTable *nt = sp_parse_file(source, argv[0]);
   if (eval_path[0]) remove(eval_path);
   if (!nt) {
@@ -1367,6 +1395,62 @@ int main(int argc, char **argv) {
 
   if (dump_ast) { int rc = run_table_mode(nt, dump_ast); nt_free(nt); return rc; }
   sp_timing_end(tm_front, "frontend", "");
+
+  if (target_lua) {
+    if (emit_rbs || emit_types || emit_symbol_map || print_build || inc_flags.on ||
+        g_ext_init_name || g_ext_entries || g_ext_classes || g_ext_target ||
+        n_link_extra || cc_jobs || !sp_streq(int_overflow, "raise") || g_load_model_graph) {
+      fprintf(stderr, "kah: native build/analysis flags and the graph load model are unavailable for the Lua backend\n");
+      nt_free(nt); return 2;
+    }
+    char *lua = codegen_lua_program(nt);
+    nt_free(nt);
+    if (!lua) return 1;
+    if (stdout_mode) { fputs(lua, stdout); free(lua); return 0; }
+    int lua_run = run_mode || (eval_used && !output);
+    char lua_path[4096];
+    if (lua_run) make_temp_path(lua_path, sizeof lua_path, "kah", 0, ".lua");
+    else snprintf(lua_path, sizeof lua_path, "%s%s", output ? output : basename, output ? "" : ".lua");
+    if (output && !run_mode) snprintf(lua_path, sizeof lua_path, "%s", output);
+    if (!lua_run) {
+      struct stat input_st, output_st;
+      if (stat(source, &input_st) == 0 && stat(lua_path, &output_st) == 0 &&
+          input_st.st_dev == output_st.st_dev && input_st.st_ino == output_st.st_ino) {
+        fprintf(stderr, "kah: output would overwrite the Ruby input: %s\n", lua_path);
+        free(lua); return 1;
+      }
+      FILE *existing = fopen(lua_path, "rb");
+      if (existing) {
+        char banner[80] = {0}; fgets(banner, sizeof banner, existing); fclose(existing);
+        if (strncmp(banner, "-- Generated by Kah:", 20) && !g_force_overwrite) {
+          fprintf(stderr, "kah: refusing to overwrite %s; use --force for a file Kah did not generate\n", lua_path);
+          free(lua); return 1;
+        }
+      }
+    }
+    if (!write_text_file(lua_path, lua)) { free(lua); return 1; }
+    free(lua);
+    if (!lua_run) { fprintf(stderr, "Wrote %s\n", lua_path); return 0; }
+    if (!lua_cmd || !*lua_cmd) lua_cmd = target_lua == 2 ? "luajit" : "lua";
+    char **lua_args = calloc((size_t)n_run_args + 3, sizeof(char *));
+    if (!lua_args) { remove(lua_path); return 1; }
+    lua_args[0] = (char *)lua_cmd; lua_args[1] = lua_path;
+    for (int i = 0; i < n_run_args; i++) lua_args[i + 2] = run_args[i];
+    pid_t child = fork();
+    if (child == 0) {
+      execvp(lua_cmd, lua_args);
+      fprintf(stderr, "kah: cannot run %s: %s\n", lua_cmd, strerror(errno));
+      _exit(127);
+    }
+    int status = 0, rc = 1;
+    if (child < 0) perror("kah: fork");
+    else {
+      pid_t waited;
+      do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+      if (waited > 0) rc = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+    }
+    free(lua_args); remove(lua_path); return rc;
+  }
 
   /* the CRuby shim's feature name (Init_<feature>, the require name) derives
      from the output basename; codegen needs it while generating the shim */

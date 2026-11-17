@@ -342,7 +342,7 @@ SPINEL_HDRS += src/order_plan.h
 SPINEL_OBJ  += build/csrc/order_plan.o
 # --incremental: the hashes that name a unit and key its cached object.
 SPINEL_HDRS += src/sha256.h
-SPINEL_OBJ  += build/csrc/sha256.o
+SPINEL_OBJ  += build/csrc/sha256.o build/csrc/codegen_lua.o
 # --incremental's native step: preprocess, split into units, build.
 SPINEL_HDRS += src/unit_cache.h
 SPINEL_OBJ  += build/csrc/unit_cache.o
@@ -6922,3 +6922,25 @@ cext-threads-test: $(SPINEL) lib/libspinel_cext_rt.a lib/libspinel_cext_rt_mt.a
 
 bin/spinel-cext-build: tools/cext-record.rb tools/cext-extconf.rb tools/spin/toml.rb tools/cext/recorder.c tools/cext/recorder.h include/ruby.h lib/libspinel_cext_rt.a lib/libspinel_cext_rt_mt.a
 bin/spin: bin/spinel-cext-build
+
+# Kah is the same Prism frontend and driver, selecting the portable Lua backend.
+.PHONY: kah kah-test install-kah
+kah: bin/kah
+
+bin/kah: $(SPINEL)
+	ln -sf spinel $@
+
+src/kah_runtime.inc: lib/kah_runtime.lua tools/gen_kah_runtime.rb
+	ruby tools/gen_kah_runtime.rb > $@.tmp
+	mv $@.tmp $@
+
+build/csrc/codegen_lua.o build/csrc-work/codegen_lua.o build/csrc-trace/codegen_lua.o build/csrc-san/codegen_lua.o: src/kah_runtime.inc src/codegen_lua.h
+build/csrc/main.o build/csrc-work/main.o build/csrc-trace/main.o build/csrc-san/main.o: src/codegen_lua.h
+
+kah-test: bin/kah
+	python3 tools/test_kah.py
+
+# Standalone Kah needs neither the native Ruby runtime archive nor Ruby at runtime.
+install-kah: bin/kah
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 $(SPINEL) $(DESTDIR)$(PREFIX)/bin/kah
