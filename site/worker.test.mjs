@@ -24,10 +24,9 @@ test('redirects the exact root while retaining query parameters', () => {
   assert.equal(response.headers.get('Location'), 'https://spacegho.st/kah/?from=moon');
 });
 
-test('protects responses and honors HEAD and conditional GET', async () => {
+test('sets content headers and honors HEAD and conditional GET', async () => {
   const response = request('/kah/');
-  assert.match(response.headers.get('Content-Security-Policy'), /script-src 'sha256-/);
-  assert.match(response.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
+  assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
   const cached = request('/kah/', { headers: { 'If-None-Match': response.headers.get('ETag') } });
   assert.equal(cached.status, 304);
   assert.equal(await cached.text(), '');

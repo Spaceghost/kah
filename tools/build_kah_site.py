@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Build the static Kah site and a self-contained Cloudflare Worker module."""
-import base64
 import hashlib
 import html
 import json
@@ -63,13 +62,6 @@ def render_guide(source):
     return '\n'.join(out)
 
 
-def csp(source):
-    def hashes(tag):
-        pieces = re.findall(r'<' + tag + r'(?:\s[^>]*)?>(.*?)</' + tag + '>', source, re.S)
-        return ' '.join("'sha256-" + base64.b64encode(hashlib.sha256(piece.encode()).digest()).decode() + "'" for piece in pieces) or "'none'"
-    return "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; font-src 'self'; connect-src 'none'; script-src " + hashes('script') + '; style-src ' + hashes('style')
-
-
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     generated = OUT / 'hello.lua'
@@ -97,7 +89,7 @@ def main():
         '/kah/examples/hello.lua': (generated.read_text(), 'text/plain; charset=utf-8'),
         '/kah/examples/interop.rb': ((ROOT / 'examples/kah/interop.rb').read_text(), 'text/plain; charset=utf-8'),
     }
-    assets = {path: {'body': body, 'contentType': kind, 'etag': '"' + hashlib.sha256(body.encode()).hexdigest() + '"', 'csp': csp(body) if kind.startswith('text/html') else None} for path, (body, kind) in sources.items()}
+    assets = {path: {'body': body, 'contentType': kind, 'etag': '"' + hashlib.sha256(body.encode()).hexdigest() + '"'} for path, (body, kind) in sources.items()}
     worker = 'const ASSETS = ' + json.dumps(assets, ensure_ascii=False) + ';\n' + (ROOT / 'site/worker.mjs').read_text() + '\nexport default createWorker(ASSETS);\n'
     (OUT / 'worker.mjs').write_text(worker)
     metadata = {'main_module': 'worker.mjs', 'compatibility_date': '2026-11-17', 'bindings': [], 'observability': {'enabled': True, 'logs': {'enabled': True, 'invocation_logs': True, 'head_sampling_rate': 1}, 'traces': {'enabled': True, 'head_sampling_rate': 0.01}}}

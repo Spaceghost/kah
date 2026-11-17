@@ -18,7 +18,6 @@ export function createWorker(assets) {
         'Cache-Control': 'public, max-age=60, stale-while-revalidate=300',
         ETag: asset.etag,
       });
-      if (asset.csp) headers['Content-Security-Policy'] = asset.csp;
       if (request.headers.get('If-None-Match') === asset.etag) return new Response(null, { status: 304, headers });
       return new Response(request.method === 'HEAD' ? null : asset.body, { headers });
     },
