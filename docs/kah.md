@@ -1,31 +1,41 @@
 # Kah
 
-Kah compiles a Ruby subset to portable Lua source. It uses **Ruby's Prism
-parser through matz/spinel**, with a new backend before Spinel's native C
-analysis. The generated file includes a small Ruby compatibility runtime and
+Kah compiles a Ruby subset to portable Lua source. Its compiler logic is
+**Ruby compiled by Spinel**, with **Nelua for native services and typed Prism
+access**. Ruby's Prism remains the parser. The generated file includes a small Ruby compatibility runtime and
 runs without Ruby, Spinel, or Kah installed on the destination machine.
 
-Kah is an early prototype, version 0.1.0. It is not a complete Ruby
+Kah is an early prototype, version 0.2.0. It is not a complete Ruby
 implementation. It makes no performance claims. The current implementation
 prioritizes Ruby behavior across Lua and LuaJIT over optimizing generated code.
 
 ## Build
 
 Clone [Spaceghost/kah](https://github.com/Spaceghost/kah), then build with a C
-compiler, Make, curl, tar, and Ruby available:
+compiler, Make, curl, tar, Ruby, and [Nelua](https://nelua.io/) available:
 
 ```sh
 git clone https://github.com/Spaceghost/kah.git
 cd kah
-make deps
-make -j4 kah
+make kah-deps
+make -j4 kah NELUA=/path/to/nelua
 ./bin/kah --version
 ```
 
-`make deps` fetches Prism 1.9.0 and RBS from RubyGems. The build reuses Spinel's
-native compiler; Ruby runs the existing build generators. Kah embeds Prism and
-the Lua compatibility runtime in its compiler binary. No RubyGem installation
-or Ruby process is needed when compiling or running programs afterward.
+`make kah-deps` fetches Prism 1.9.0 from RubyGems. Spinel compiles the Ruby
+implementation, Nelua compiles the native layer, and the build links those outputs
+with Prism and Spinel's generated-code runtime. Ruby runs build generators. The
+installed compiler embeds its Lua runtime and needs none of those compiler tools
+at runtime.
+
+A compatible installed Spinel can replace the source bootstrap:
+
+```sh
+make kah SPINEL_BOOTSTRAP=/path/to/spinel NELUA=/path/to/nelua
+```
+
+Read [the native implementation guide](kah-native.md) for the language boundary,
+remaining C dependencies, ownership rules, and source audit.
 
 For a user-local standalone installation:
 
@@ -65,10 +75,9 @@ This is source portability; Lua and LuaJIT bytecode formats are not interchangea
 With `-E`, compiler options precede the Ruby file. Subsequent arguments become
 Ruby's `ARGV`. `--lua=PATH` selects an executable, not a shell command.
 
-`spinel --target=lua` and `spinel --target=luajit` select the same backend.
-The `kah` executable selects Lua by default; `spinel` keeps its native default.
-C link inputs, native extension options, analysis output modes, and incremental
-native builds are rejected for a Lua target.
+`kah --target=lua` and `kah --target=luajit` emit the same portable source.
+They select the default interpreter for `-E`. Kah is a separate executable from
+Spinel; use Spinel directly for native Ruby output and its native build options.
 Existing files that Kah did not generate need `--force` to overwrite. The Ruby
 input cannot be overwritten, including through a symlink or hard link.
 
@@ -148,12 +157,14 @@ The prototype does not implement exception rescue/ensure, runtime Ruby `eval`,
 RubyGems or native extensions, regular expressions, `case`/pattern matching,
 `for`, multiple assignment, lambdas, `super`, keyword or post-rest parameters,
 splats, class variables, visibility enforcement, refinements, threads, fibers,
-custom or composite Hash key semantics, or the full Ruby standard library. Spinel's local source resolver is reused;
-there is no general Ruby library compatibility promise.
+custom or composite Hash key semantics, or the full Ruby standard library. Local `require_relative` is resolved from the containing file; `require` uses
+`-I` roots and the working directory. Required source is compiled into lazy
+loaders with independent locals. There is no general Ruby library compatibility
+promise.
 
 The runtime uses protected calls for Ruby's nonlocal control flow and a
-per-activation temporary table. A Lua target intentionally skips Spinel's
-native type-inference optimizations. Performance tuning and broader Ruby
+per-activation temporary table. Kah implements the user program's lowering in Ruby. Spinel's type inference
+optimizes the compiler implementation rather than the emitted Lua program. Performance tuning and broader Ruby
 compatibility are future work, not properties of this initial backend.
 
 ## Verify
@@ -168,10 +179,24 @@ The suite compares complete program output against CRuby, compiles each Ruby
 fixture once, and runs that same Lua file on every detected VM. It requires
 both LuaJIT and at least one standard Lua interpreter. It also checks compile
 refusals, input/output protection, runner arguments, missing interpreters, Lua
-module calls, and the existing native C backend's source generation.
+module calls, local/cyclic imports, interpreter exit statuses, and the Spinel
+bootstrap's native source generation.
+
+## Implementation checks
+
+```sh
+make kah-source-audit
+make kah-native-test
+```
+
+The audit reports zero handwritten C in the compiler implementation and verifies
+that the legacy Spinel compiler pipeline is absent from Kah's executable. The
+native bridge test exercises Prism ownership and binary-safe strings. See the
+[native implementation guide](kah-native.md) for the complete boundary.
 
 ## Foundations and license
 
 Kah builds on [matz/spinel](https://github.com/matz/spinel) and
-[ruby/prism](https://github.com/ruby/prism). The inherited MIT license and
+[ruby/prism](https://github.com/ruby/prism), and uses
+[Nelua](https://nelua.io/) for native implementation. The inherited MIT license and
 attributions remain in this repository. The Kah additions use that same license.

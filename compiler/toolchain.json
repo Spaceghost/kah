@@ -1,0 +1,9 @@
+{
+  "project": "kah",
+  "version": "0.2.0",
+  "implementation": {"logic": "Ruby / Spinel", "native": "Nelua", "parser": "Prism"},
+  "prism_version": "1.9.0",
+  "spinel_compatibility_base": "9a40eee3373d383ed72f71c27cfc0b4e78c23528",
+  "nelua_tested_revision": "3c29419776dfdca194fa7e9c572498264fe5c654",
+  "policy": "No handwritten C or inline C adapters in compiler/. Generated C and upstream runtime/parser dependencies are retained."
+}

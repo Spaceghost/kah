@@ -342,7 +342,7 @@ SPINEL_HDRS += src/order_plan.h
 SPINEL_OBJ  += build/csrc/order_plan.o
 # --incremental: the hashes that name a unit and key its cached object.
 SPINEL_HDRS += src/sha256.h
-SPINEL_OBJ  += build/csrc/sha256.o build/csrc/codegen_lua.o
+SPINEL_OBJ  += build/csrc/sha256.o
 # --incremental's native step: preprocess, split into units, build.
 SPINEL_HDRS += src/unit_cache.h
 SPINEL_OBJ  += build/csrc/unit_cache.o
@@ -6923,24 +6923,73 @@ cext-threads-test: $(SPINEL) lib/libspinel_cext_rt.a lib/libspinel_cext_rt_mt.a
 bin/spinel-cext-build: tools/cext-record.rb tools/cext-extconf.rb tools/spin/toml.rb tools/cext/recorder.c tools/cext/recorder.h include/ruby.h lib/libspinel_cext_rt.a lib/libspinel_cext_rt_mt.a
 bin/spin: bin/spinel-cext-build
 
-# Kah is the same Prism frontend and driver, selecting the portable Lua backend.
-.PHONY: kah kah-test install-kah
+# ---- Kah: Ruby logic compiled by Spinel + typed native support compiled by Nelua ----
+# The inherited C compiler is a bootstrap tool. None of its compiler objects
+# are linked into the Kah executable.
+.PHONY: kah kah-test kah-source-audit install-kah
+NELUA ?= nelua
+NELUA_CACHE_DIR ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/kah/nelua
+KAH_BUILD = build/kah-native
+ifeq ($(origin SPINEL_BOOTSTRAP),undefined)
+SPINEL_BOOTSTRAP = $(abspath $(SPINEL))
+KAH_BOOTSTRAP_DEP = $(SPINEL)
+else
+KAH_BOOTSTRAP_DEP =
+endif
+KAH_RUBY = compiler/kah.rb compiler/native.rb compiler/lua_emitter.rb
+KAH_NATIVE = compiler/native/prism.nelua compiler/native/platform.nelua
+
 kah: bin/kah
 
-bin/kah: $(SPINEL)
-	ln -sf spinel $@
+$(KAH_BUILD):
+	mkdir -p $@
 
-src/kah_runtime.inc: lib/kah_runtime.lua tools/gen_kah_runtime.rb
-	ruby tools/gen_kah_runtime.rb > $@.tmp
+$(KAH_BUILD)/runtime.rb: lib/kah_runtime.lua tools/embed_kah_runtime.rb | $(KAH_BUILD)
+	ruby tools/embed_kah_runtime.rb $< > $@.tmp
 	mv $@.tmp $@
 
-build/csrc/codegen_lua.o build/csrc-work/codegen_lua.o build/csrc-trace/codegen_lua.o build/csrc-san/codegen_lua.o: src/kah_runtime.inc src/codegen_lua.h
-build/csrc/main.o build/csrc-work/main.o build/csrc-trace/main.o build/csrc-san/main.o: src/codegen_lua.h
+$(KAH_BUILD)/prism_bindings.nelua: $(PRISM_INC)/prism/ast.h tools/gen_kah_prism.rb | $(KAH_BUILD)
+	ruby tools/gen_kah_prism.rb $< > $@.tmp
+	mv $@.tmp $@
+
+$(KAH_BUILD)/native.nelua: $(KAH_NATIVE) $(KAH_BUILD)/prism_bindings.nelua tools/assemble_kah_native.rb
+	ruby tools/assemble_kah_native.rb compiler/native/prism.nelua $(KAH_BUILD)/prism_bindings.nelua compiler/native/platform.nelua $@
+
+$(KAH_BUILD)/native.o: $(KAH_BUILD)/native.nelua
+	$(NELUA) --cache-dir "$(NELUA_CACHE_DIR)" --cc "$(CC)" --cflags="-D_GNU_SOURCE -I$(abspath $(PRISM_INC))" -r -B -o $@ $<
+
+$(KAH_BUILD)/kah.c: $(KAH_RUBY) $(KAH_BUILD)/runtime.rb $(KAH_BOOTSTRAP_DEP)
+	$(SPINEL_BOOTSTRAP) compiler/kah.rb -c -o $@
+
+$(KAH_BUILD)/kah: $(KAH_BUILD)/kah.c $(KAH_BUILD)/native.o $(SP_RT_LIB) $(PRISM_LIB)
+	$(CC) $(CFLAGS) -Ilib -Ilib/regexp $(KAH_BUILD)/kah.c $(KAH_BUILD)/native.o $(PRISM_LIB) $(SP_RT_LIB) -lm $(LDFLAGS) -o $@
+
+# Switch the symlink after linking, preserving an existing bootstrap executable.
+bin/kah: $(KAH_BUILD)/kah
+	mkdir -p bin
+	ln -sf ../$(KAH_BUILD)/kah $@
+
+kah-source-audit: bin/kah
+	ruby tools/audit_kah_sources.rb $(KAH_BUILD)/kah
 
 kah-test: bin/kah
-	python3 tools/test_kah.py
+	SPINEL_BOOTSTRAP="$(SPINEL_BOOTSTRAP)" python3 tools/test_kah.py
+	ruby tools/audit_kah_sources.rb $(KAH_BUILD)/kah
 
-# Standalone Kah needs neither the native Ruby runtime archive nor Ruby at runtime.
+# The installed executable embeds both the Ruby implementation and Lua runtime.
 install-kah: bin/kah
 	install -d $(DESTDIR)$(PREFIX)/bin
-	install -m 755 $(SPINEL) $(DESTDIR)$(PREFIX)/bin/kah
+	install -m 755 $(KAH_BUILD)/kah $(DESTDIR)$(PREFIX)/bin/kah
+
+$(KAH_BUILD)/native_bridge.c: compiler/spec/native_bridge.rb compiler/native.rb $(KAH_BOOTSTRAP_DEP)
+	$(SPINEL_BOOTSTRAP) compiler/spec/native_bridge.rb -c -o $@
+
+$(KAH_BUILD)/native_bridge: $(KAH_BUILD)/native_bridge.c $(KAH_BUILD)/native.o $(SP_RT_LIB) $(PRISM_LIB)
+	$(CC) $(CFLAGS) -Ilib -Ilib/regexp $(KAH_BUILD)/native_bridge.c $(KAH_BUILD)/native.o $(PRISM_LIB) $(SP_RT_LIB) -lm $(LDFLAGS) -o $@
+
+.PHONY: kah-native-test
+kah-native-test: $(KAH_BUILD)/native_bridge
+	./$(KAH_BUILD)/native_bridge
+
+.PHONY: kah-deps
+kah-deps: vendor/prism/include/prism/diagnostic.h

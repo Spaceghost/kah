@@ -1,0 +1,230 @@
+-- Prism ownership, typed AST access, and OS support for Spinel-compiled Ruby.
+-- C headers are imported from dependencies; implementation is written in Nelua.
+## pragmas.nogc = true
+## cinclude '"prism.h"'
+require 'sequence'
+require 'C.stdlib'
+require 'C.string'
+require 'C.stdio'
+
+local Location <cimport 'pm_location_t',nodecl,cincomplete> = @record{start:*uint8}
+local Node <cimport 'pm_node_t',nodecl> = @record{type:uint16,flags:uint16,node_id:uint32,location:Location}
+local NodeList <cimport 'pm_node_list_t',nodecl> = @record{size:csize,capacity:csize,nodes:*[0]*Node}
+local ListNode <cimport 'pm_list_node_t',nodecl,cincomplete> = @record{next:pointer}
+local List <cimport 'pm_list_t',nodecl,cincomplete> = @record{head:*ListNode,size:csize}
+local ConstantPool <cimport 'pm_constant_pool_t',nodecl,cincomplete> = @record{}
+local Constant <cimport 'pm_constant_t',nodecl,cincomplete> = @record{start:*uint8,length:csize}
+local Parser <cimport 'pm_parser_t',nodecl,cincomplete> = @record{node_id:uint32,error_list:List,constant_pool:ConstantPool}
+local Diagnostic <cimport 'pm_diagnostic_t',nodecl,cincomplete> = @record{node:ListNode,location:Location,message:cstring}
+local PrismString <cimport 'pm_string_t',nodecl,cincomplete> = @record{}
+local PrismInteger <cimport 'pm_integer_t',nodecl> = @record{length:csize,values:*[0]uint32,value:uint32,negative:boolean}
+local Buffer <cimport 'pm_buffer_t',nodecl> = @record{length:csize,capacity:csize,value:cstring}
+local function pm_parser_init(p:*Parser,s:pointer,n:csize,o:pointer) <cimport,nodecl> end
+local function pm_parse(p:*Parser):*Node <cimport,nodecl> end
+local function pm_node_destroy(p:*Parser,n:*Node) <cimport,nodecl> end
+local function pm_parser_free(p:*Parser) <cimport,nodecl> end
+local function pm_buffer_init(b:*Buffer):boolean <cimport,nodecl> end
+local function pm_buffer_free(b:*Buffer) <cimport,nodecl> end
+local function pm_buffer_append_string(b:*Buffer,s:cstring,n:csize) <cimport,nodecl> end
+local function pm_integer_string(b:*Buffer,n:*PrismInteger) <cimport,nodecl> end
+local function pm_string_source(s:*PrismString):*uint8 <cimport,nodecl> end
+local function pm_string_length(s:*PrismString):csize <cimport,nodecl> end
+local function pm_constant_pool_id_to_constant(p:*ConstantPool,id:uint32):*Constant <cimport,nodecl> end
+
+-- @prism-bindings
+
+local function native_isinf(n:cdouble):cint <cimport 'isinf',nodecl,cinclude '<math.h>'> end
+local function native_signbit(n:cdouble):cint <cimport 'signbit',nodecl,cinclude '<math.h>'> end
+
+local Context = @record{parser:Parser,root:*Node,source:*[0]uint8,size:csize,nodes:sequence(*Node),text:Buffer}
+local function intern(ctx:*Context,node:*Node):clong
+  if not node then return -1 end
+  local id=usize(node.node_id)+1
+  if id > #ctx.nodes then ctx.nodes:resize(id) end
+  ctx.nodes[id]=node
+  return clong(node.node_id)
+end
+local function lookup(ctx:*Context,id:clong):*Node
+  if id < 0 or usize(id)+1 > #ctx.nodes then return nilptr end
+  return ctx.nodes[usize(id)+1]
+end
+local function append(ctx:*Context,s:cstring,n:csize)
+  pm_buffer_append_string(&ctx.text,s,n)
+end
+local function line_at(ctx:*Context,start:*uint8):clong
+  if not start then return 1 end
+  local distance=((@usize)(start)-(@usize)(ctx.source))
+  if distance > ctx.size then return 1 end
+  local line:clong=1
+  for i=0,<distance do if ctx.source[i]==10 then line=line+1 end end
+  return line
+end
+local function integer_magnitude(value:*PrismInteger):uint64
+  if value.length == 0 then return value.value end
+  if value.length > 2 then return 18446744073709551615_u64 end
+  local n=uint64(value.values[0])
+  if value.length==2 then n=n | (uint64(value.values[1]) << 32) end
+  return n
+end
+
+local function kah_native_parse(source:cstring,size:csize):*Context <cexport,codename 'kah_native_parse'>
+  local ctx=new(@Context)
+  ctx.source=(@*[0]uint8)(C.malloc(size+1))
+  assert(ctx.source,'cannot allocate source buffer')
+  C.memcpy(ctx.source,source,size)
+  ctx.source[size]=0
+  ctx.size=size
+  assert(pm_buffer_init(&ctx.text),'cannot allocate text buffer')
+  pm_parser_init(&ctx.parser,ctx.source,size,nilptr)
+  ctx.root=pm_parse(&ctx.parser)
+  intern(ctx,ctx.root)
+  return ctx
+end
+local function kah_native_close(ctx:*Context) <cexport,codename 'kah_native_close'>
+  if not ctx then return end
+  pm_node_destroy(&ctx.parser,ctx.root)
+  pm_parser_free(&ctx.parser)
+  pm_buffer_free(&ctx.text)
+  ctx.nodes:destroy()
+  C.free(ctx.source)
+  delete(ctx)
+end
+local function kah_native_root(ctx:*Context):clong <cexport,codename 'kah_native_root'>
+  return intern(ctx,ctx.root)
+end
+local function kah_native_kind(ctx:*Context,id:clong):cstring <cexport,codename 'kah_native_kind'>
+  local node=lookup(ctx,id)
+  if not node then return '' end
+  return kind_name(node)
+end
+local function kah_native_ref(ctx:*Context,id:clong,name:cstring):clong <cexport,codename 'kah_native_ref'>
+  local node=lookup(ctx,id)
+  if not node then return -1 end
+  local field:string=name
+  return intern(ctx,field_ref(node,field))
+end
+local function kah_native_count(ctx:*Context,id:clong,name:cstring):clong <cexport,codename 'kah_native_count'>
+  local node=lookup(ctx,id)
+  if not node then return 0 end
+  local field:string=name
+  local list=field_list(node,field)
+  if not list then return 0 end
+  return clong(list.size)
+end
+local function kah_native_child(ctx:*Context,id:clong,name:cstring,index:clong):clong <cexport,codename 'kah_native_child'>
+  local node=lookup(ctx,id)
+  if not node or index<0 then return -1 end
+  local field:string=name
+  local list=field_list(node,field)
+  if not list or csize(index)>=list.size then return -1 end
+  return intern(ctx,list.nodes[index])
+end
+local function kah_native_integer(ctx:*Context,id:clong,name:cstring):clong <cexport,codename 'kah_native_integer'>
+  local node=lookup(ctx,id)
+  if not node then return 0 end
+  local field:string=name
+  if node.type==PM_INTEGER_NODE and field=='value' then
+    local n=(@*IntegerNode)(node)
+    local magnitude=integer_magnitude(&n.value)
+    if magnitude>9007199254740991_u64 then return 0 end
+    local result=clong(magnitude)
+    if n.value.negative then result=-result end
+    return result
+  end
+  if field=='node_line' then return line_at(ctx,node.location.start) end
+  return field_integer(node,field)
+end
+local function kah_native_float(ctx:*Context,id:clong):cdouble <cexport,codename 'kah_native_float'>
+  local node=lookup(ctx,id)
+  if not node or node.type~=PM_FLOAT_NODE then return 0.0 end
+  return (@*FloatNode)(node).value
+end
+local function kah_native_text(ctx:*Context,id:clong,name:cstring):clong <cexport,codename 'kah_native_text'>
+  ctx.text.length=0
+  local node=lookup(ctx,id)
+  if not node then return 0 end
+  local field:string=name
+  if node.type==PM_FLOAT_NODE and field=='value_text' then
+    local n=(@*FloatNode)(node).value
+    if native_isinf(n)~=0 then
+      if n<0 then append(ctx,'(-math.huge)',12) else append(ctx,'math.huge',9) end
+    elseif n==0.0 and native_signbit(n)~=0 then
+      append(ctx,'(-1.0 / math.huge)',18)
+    else
+      local buffer:[64]cchar
+      local length=C.snprintf((@cstring)(&buffer[0]),64,'%.17g',n)
+      append(ctx,(@cstring)(&buffer[0]),csize(length))
+    end
+    return clong(ctx.text.length)
+  end
+  if node.type==PM_INTEGER_NODE and field=='bigval' then
+    local n=(@*IntegerNode)(node)
+    if integer_magnitude(&n.value)>9007199254740991_u64 then pm_integer_string(&ctx.text,&n.value) end
+    return clong(ctx.text.length)
+  end
+  local constant=field_constant(node,field)
+  if constant~=0 then
+    local value=pm_constant_pool_id_to_constant(&ctx.parser.constant_pool,constant)
+    append(ctx,(@cstring)(value.start),value.length)
+    return clong(ctx.text.length)
+  end
+  if node.type==PM_STRING_NODE and field=='content' then field='unescaped' end
+  if node.type==PM_SYMBOL_NODE and field=='value' then field='unescaped' end
+  local value=field_string(node,field)
+  if value then append(ctx,(@cstring)(pm_string_source(value)),pm_string_length(value)) end
+  return clong(ctx.text.length)
+end
+local function kah_native_text_byte(ctx:*Context,index:clong):cint <cexport,codename 'kah_native_text_byte'>
+  if index<0 or csize(index)>=ctx.text.length then return 0 end
+  local bytes=(@*[0]uint8)(ctx.text.value)
+  return cint(bytes[index])
+end
+local function diagnostic(ctx:*Context,index:clong):*Diagnostic
+  local current=ctx.parser.error_list.head
+  while index>0 and current do current=(@*ListNode)(current.next); index=index-1 end
+  return (@*Diagnostic)(current)
+end
+local function kah_native_errors(ctx:*Context):clong <cexport,codename 'kah_native_errors'>
+  return clong(ctx.parser.error_list.size)
+end
+local function kah_native_error_line(ctx:*Context,index:clong):clong <cexport,codename 'kah_native_error_line'>
+  local d=diagnostic(ctx,index)
+  if not d then return 1 end
+  return line_at(ctx,d.location.start)
+end
+local function kah_native_error_message(ctx:*Context,index:clong):cstring <cexport,codename 'kah_native_error_message'>
+  local d=diagnostic(ctx,index)
+  if not d then return '' end
+  return d.message
+end
+
+local PM_RANGE_FLAGS_EXCLUDE_END:uint16 <cimport,nodecl>
+local PM_LOOP_FLAGS_BEGIN_MODIFIER:uint16 <cimport,nodecl>
+local PM_CALL_NODE_FLAGS_SAFE_NAVIGATION:uint16 <cimport,nodecl>
+local PM_CALL_NODE_FLAGS_ATTRIBUTE_WRITE:uint16 <cimport,nodecl>
+local function kah_native_flag(ctx:*Context,id:clong,name:cstring):clong <cexport,codename 'kah_native_flag'>
+  local node=lookup(ctx,id)
+  if not node then return 0 end
+  local field:string=name
+  local flag:uint16
+  if field=='exclude_end' then flag=PM_RANGE_FLAGS_EXCLUDE_END
+  elseif field=='post_test' then flag=PM_LOOP_FLAGS_BEGIN_MODIFIER
+  elseif field=='safe_nav' then flag=PM_CALL_NODE_FLAGS_SAFE_NAVIGATION
+  elseif field=='attr_write' then flag=PM_CALL_NODE_FLAGS_ATTRIBUTE_WRITE
+  else return 0 end
+  if (node.flags & flag)~=0 then return 1 end
+  return 0
+end
+local function kah_native_init() <cexport,entrypoint,codename 'kah_native_init'>
+  local function nelua_main(argc:cint,argv:*cstring):cint <cimport,nodecl> end
+  nelua_main(0,nilptr)
+end
+
+-- Spinel documents this length slot as the binary-safe FFI string contract.
+local sp_ffi_bin_len:cint <cimport>
+local function kah_native_string(ctx:*Context,id:clong,name:cstring):cstring <cexport,codename 'kah_native_string'>
+  kah_native_text(ctx,id,name)
+  assert(ctx.text.length<=2147483647,'AST text is too large for the FFI length slot')
+  sp_ffi_bin_len=cint(ctx.text.length)
+  return ctx.text.value
+end

@@ -15,20 +15,23 @@ def inline(text):
     text = html.escape(text)
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
     text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
-    return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    def link(match):
+        target = {'kah-native.md': '/kah/native', 'kah.md': '/kah/docs'}.get(match[2], match[2])
+        return f'<a href="{target}">{match[1]}</a>'
+    return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', link, text)
 
 
 def render_guide(source):
     # The guide is trusted repository Markdown with headings, lists, tables,
     # paragraphs, and fenced code. No user input or external HTML is accepted.
-    out, paragraph, in_code, code, in_list, table = [], [], False, [], False, []
+    out, paragraph, in_code, code, in_list, table = [], [], False, [], '', []
 
     def flush():
         nonlocal paragraph, in_list, table
         if paragraph:
             out.append('<p>' + inline(' '.join(paragraph)) + '</p>'); paragraph = []
         if in_list:
-            out.append('</ul>'); in_list = False
+            out.append(f'</{in_list}>'); in_list = ''
         if table:
             head, *rows = table
             out.append('<div class="table-wrap"><table><thead><tr>' + ''.join('<th>' + inline(x) + '</th>' for x in head) + '</tr></thead><tbody>')
@@ -50,10 +53,12 @@ def render_guide(source):
             flush(); heading = line.split(' ', 1); level = len(heading[0]); title = heading[1]
             anchor = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
             out.append(f'<h{level} id="{anchor}">{inline(title)}</h{level}>'); continue
-        if line.startswith('- '):
-            if paragraph: flush()
-            if not in_list: out.append('<ul>'); in_list = True
-            out.append('<li>' + inline(line[2:]) + '</li>'); continue
+        item = re.match(r'^(-|\d+\.) (.*)$', line)
+        if item:
+            tag = 'ul' if item[1] == '-' else 'ol'
+            if paragraph or (in_list and in_list != tag): flush()
+            if not in_list: out.append(f'<{tag}>'); in_list = tag
+            out.append('<li>' + inline(item[2]) + '</li>'); continue
         if in_list:
             # Wrapped Markdown list text belongs to the previous list item.
             out[-1] = out[-1][:-5] + ' ' + inline(line.strip()) + '</li>'
@@ -77,14 +82,22 @@ def main():
     (OUT / 'index.html').write_text(page)
     style = re.search(r'<style>(.*?)</style>', page, re.S)[1]
     favicon = re.search(r'<link rel="icon"[^>]*>', page)[0]
-    guide_style = '\n.guide{max-width:850px;margin:0 auto;padding:80px 24px 100px}.guide h1{font-size:clamp(54px,10vw,96px);margin:0 0 32px}.guide h2{font-size:36px;margin:60px 0 20px}.guide p,.guide li,.guide td{line-height:1.8;color:var(--muted,#c9b9be)}.guide ul{padding-left:22px}.guide li{margin:10px 0}.guide pre{padding:24px;background:#211b24;overflow:auto;border:1px solid #4b3540;border-radius:12px;font-size:13px}.guide :not(pre)>code{color:#f4b7bf;font-size:.9em}.guide .table-wrap{overflow:auto}.guide table{border-collapse:collapse;width:100%;font-size:14px}.guide th,.guide td{text-align:left;padding:12px;border-bottom:1px solid #4b3540}.guide a{color:#f1a5af;text-decoration:underline;text-underline-offset:4px}.guide nav{display:flex;gap:24px;margin-bottom:52px;flex-wrap:wrap}.guide h2{scroll-margin-top:30px}@media(max-width:600px){.guide{padding-top:40px}.guide pre{padding:16px}.guide h2{font-size:30px}}'
+    guide_style = '\n.guide{max-width:850px;margin:0 auto;padding:80px 24px 100px}.guide h1{font:clamp(48px,8vw,72px)/1.08 var(--serif);letter-spacing:-.04em;margin:0 0 32px;overflow-wrap:anywhere}.guide h2{font-size:36px;margin:60px 0 20px}.guide p,.guide li,.guide td{line-height:1.8;color:var(--muted,#c9b9be)}.guide ul,.guide ol{padding-left:22px}.guide li{margin:10px 0}.guide pre{padding:24px;background:#211b24;overflow:auto;border:1px solid #4b3540;border-radius:12px;font-size:13px}.guide :not(pre)>code{color:#f4b7bf;font-size:.9em}.guide .table-wrap{overflow:auto}.guide table{border-collapse:collapse;width:100%;font-size:14px}.guide th,.guide td{text-align:left;padding:12px;border-bottom:1px solid #4b3540}.guide a{color:#f1a5af;text-decoration:underline;text-underline-offset:4px}.guide nav{display:flex;gap:24px;margin-bottom:52px;flex-wrap:wrap}.guide h2{scroll-margin-top:30px}@media(max-width:600px){.guide{padding-top:40px}.guide pre{padding:16px}.guide h2{font-size:30px}}'
+    def guide_page(markdown, title, path, navigation):
+        return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#171319"><title>Kah — ' + title + '</title>' + favicon + '<link rel="canonical" href="https://spacegho.st' + path + '"><style>' + style + guide_style + '</style></head><body><main class="guide"><nav aria-label="Guide navigation"><a href="/kah/">← Kah</a>' + navigation + '</nav>' + render_guide(markdown) + '</main></body></html>'
+
     md = (ROOT / 'docs/kah.md').read_text()
-    guide = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#171319"><title>Kah — compiler guide</title>' + favicon + '<link rel="canonical" href="https://spacegho.st/kah/docs"><style>' + style + guide_style + '</style></head><body><main class="guide"><nav aria-label="Guide navigation"><a href="/kah/">← Kah</a><a href="#compile-and-run">Compile and run</a><a href="#current-limits">Current limits</a><a href="/kah/guide.md">Markdown guide</a></nav>' + render_guide(md) + '</main></body></html>'
+    native_md = (ROOT / 'docs/kah-native.md').read_text()
+    guide = guide_page(md, 'compiler guide', '/kah/docs', '<a href="#compile-and-run">Compile and run</a><a href="#current-limits">Current limits</a><a href="/kah/native">Ruby + Nelua implementation</a><a href="/kah/guide.md">Markdown guide</a>')
+    native = guide_page(native_md, 'Ruby + Nelua implementation', '/kah/native', '<a href="/kah/docs">Compiler guide</a><a href="#the-c-that-remains">Remaining C dependencies</a><a href="/kah/native.md">Markdown guide</a>')
     (OUT / 'docs.html').write_text(guide)
+    (OUT / 'native.html').write_text(native)
     sources = {
         '/kah/': (page, 'text/html; charset=utf-8'),
         '/kah/docs': (guide, 'text/html; charset=utf-8'),
         '/kah/guide.md': (md, 'text/markdown; charset=utf-8'),
+        '/kah/native': (native, 'text/html; charset=utf-8'),
+        '/kah/native.md': (native_md, 'text/markdown; charset=utf-8'),
         '/kah/examples/hello.rb': ((ROOT / 'examples/kah/hello.rb').read_text(), 'text/plain; charset=utf-8'),
         '/kah/examples/hello.lua': (generated.read_text(), 'text/plain; charset=utf-8'),
         '/kah/examples/interop.rb': ((ROOT / 'examples/kah/interop.rb').read_text(), 'text/plain; charset=utf-8'),

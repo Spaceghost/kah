@@ -13,7 +13,17 @@ test('serves Kah and the guide, with bounded routes and correct MIME types', asy
   assert.match(html, /Actual generated Lua excerpt/);
   assert.doesNotMatch(html, /illustrative|will follow the first/);
   const guide = request('/kah/docs');
-  assert.match(await guide.text(), /9007199254740991/);
+  const guideHtml = await guide.text();
+  assert.match(guideHtml, /9007199254740991/);
+  assert.match(guideHtml, /href="\/kah\/native"/);
+  const native = request('/kah/native');
+  assert.equal(native.status, 200);
+  const nativeHtml = await native.text();
+  assert.match(nativeHtml, /compiled ahead of time by Spinel/);
+  assert.match(nativeHtml, /It does not claim to have/);
+  assert.match(nativeHtml, /href="\/kah\/docs"/);
+  assert.doesNotMatch(nativeHtml, /href="kah\.md"/);
+  assert.match(await request('/kah/native.md').text(), /The C that remains/);
   assert.equal(request('/kah/not-found').status, 404);
   assert.equal(request('/unrelated').status, 404);
 });

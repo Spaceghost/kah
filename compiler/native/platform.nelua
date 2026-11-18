@@ -1,0 +1,62 @@
+-- POSIX process execution and file identity, authored in Nelua.
+local function native_fork():cint <cimport 'fork',nodecl,cinclude '<unistd.h>'> end
+local function native_execvp(file:cstring,argv:*[0]cstring):cint <cimport 'execvp',nodecl,cinclude '<unistd.h>'> end
+local function native_exit(code:cint) <cimport '_exit',nodecl,cinclude '<unistd.h>'> end
+local function native_waitpid(pid:cint,status:*cint,flags:cint):cint <cimport 'waitpid',nodecl,cinclude '<sys/wait.h>'> end
+local function native_exited(status:cint):cint <cimport 'WIFEXITED',nodecl,cinclude '<sys/wait.h>'> end
+local function native_exitstatus(status:cint):cint <cimport 'WEXITSTATUS',nodecl,cinclude '<sys/wait.h>'> end
+local function native_termsig(status:cint):cint <cimport 'WTERMSIG',nodecl,cinclude '<sys/wait.h>'> end
+local native_errno:cint <cimport 'errno',nodecl,cinclude '<errno.h>'>
+local EINTR:cint <cimport,nodecl,cinclude '<errno.h>'>
+local function native_mkstemp(pattern:cstring):cint <cimport 'mkstemp',nodecl,cinclude '<stdlib.h>'> end
+local function native_close(fd:cint):cint <cimport 'close',nodecl,cinclude '<unistd.h>'> end
+local Stat <cimport 'struct stat',nodecl,cincomplete> = @record{st_dev:culong,st_ino:culong}
+local function native_stat(path:cstring,result:*Stat):cint <cimport 'stat',nodecl,cinclude '<sys/stat.h>'> end
+local temp_path:[4096]cchar
+
+local function kah_native_same_file(a:cstring,b:cstring):cint <cexport,codename 'kah_native_same_file'>
+  local left:Stat
+  local right:Stat
+  if native_stat(a,&left)~=0 or native_stat(b,&right)~=0 then return 0 end
+  if left.st_dev==right.st_dev and left.st_ino==right.st_ino then return 1 end
+  return 0
+end
+local function kah_native_temp(dir:cstring):cstring <cexport,codename 'kah_native_temp'>
+  local length=C.snprintf((@cstring)(&temp_path[0]),4096,'%s/kah-XXXXXX',dir)
+  if length<0 or length>=4096 then return nilptr end
+  local fd=native_mkstemp((@cstring)(&temp_path[0]))
+  if fd<0 then return nilptr end
+  native_close(fd)
+  return (@cstring)(&temp_path[0])
+end
+local function kah_native_run(interpreter:cstring,path:cstring,packed:cstring,size:csize,count:csize):cint <cexport,codename 'kah_native_run'>
+  local argv=(@*[0]cstring)(C.calloc(count+3,#@cstring))
+  if not argv then return 1 end
+  argv[0]=interpreter
+  argv[1]=path
+  local bytes=(@*[0]cchar)(packed)
+  local offset:csize=0
+  for i=0,<count do
+    if offset>=size then C.free(argv); return 2 end
+    argv[i+2]=(@cstring)(&bytes[offset])
+    while offset<size and bytes[offset]~=0 do offset=offset+1 end
+    if offset>=size then C.free(argv); return 2 end
+    offset=offset+1
+  end
+  local child=native_fork()
+  if child<0 then C.perror('kah: fork'); C.free(argv); return 1 end
+  if child==0 then
+    native_execvp(interpreter,argv)
+    C.perror('kah: cannot run Lua interpreter')
+    native_exit(127)
+  end
+  local status:cint=0
+  local waited:cint
+  repeat
+    waited=native_waitpid(child,&status,0)
+  until waited>=0 or native_errno~=EINTR
+  C.free(argv)
+  if waited<0 then C.perror('kah: waitpid'); return 1 end
+  if native_exited(status)~=0 then return native_exitstatus(status) end
+  return 128+native_termsig(status)
+end

@@ -106,7 +106,7 @@ local _R = (function()
   Object.constants.Object = Object
   Object.constants.RUBY_ENGINE = "kah"
   Object.constants.RUBY_VERSION = "3.4.0"
-  Object.constants.KAH_VERSION = "0.1.0"
+  Object.constants.KAH_VERSION = "0.2.0"
   function R.object(class) return {__kah = "object", class = class, ivars = {}, singleton = {}} end
   function R.constget(owner, name)
     local current = owner
@@ -501,7 +501,7 @@ local _R = (function()
   end
   function R.exports(self)
     return {call = function(name, ...) return R.unwrap(R.send(self, name, R.pack(...), nil)) end,
-      version = "0.1.0", engine = "kah"}
+      version = "0.2.0", engine = "kah"}
   end
   return R
 end)()

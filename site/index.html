@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#171319">
-  <meta name="description" content="Kah is an experimental Ruby-to-Lua compiler built on Spinel and Prism. Write Ruby. Run on Lua and LuaJIT.">
+  <meta name="description" content="Kah is an experimental Ruby-to-Lua compiler built with Spinel, Nelua, and Prism. Write Ruby. Run on Lua and LuaJIT.">
   <meta property="og:title" content="kah — Ruby in Lua’s orbit">
-  <meta property="og:description" content="An experimental Ruby-to-Lua compiler. Prism at the front. Lua and LuaJIT at the other end.">
+  <meta property="og:description" content="An experimental Ruby-to-Lua compiler. Ruby + Spinel for the compiler. Nelua for native services. Lua and LuaJIT at the other end.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://spacegho.st/kah/">
   <link rel="canonical" href="https://spacegho.st/kah/">
@@ -50,7 +50,7 @@
         <div class="hero-copy">
           <p class="status"><span class="status-dot" aria-hidden="true"></span>An early language experiment</p>
           <h1 id="hero-title">Ruby, in<br>Lua’s <em>orbit.</em></h1>
-          <p class="hero-subtitle"><strong>Write Ruby. Run on Lua and LuaJIT.</strong><br>Kah brings Ruby’s familiar syntax to Lua’s world, with Prism at the front and Spinel underneath.</p>
+          <p class="hero-subtitle"><strong>Write Ruby. Run on Lua and LuaJIT.</strong><br>Kah brings Ruby’s familiar syntax to Lua’s world, with Prism at the front, and Spinel + Nelua underneath.</p>
           <div class="hero-actions">
             <a class="button" href="#language">Explore the language <span aria-hidden="true">↓</span></a>
             <a class="text-link" href="#how-it-works">See how it works <span aria-hidden="true">↗</span></a>
@@ -138,16 +138,17 @@
       </section>
 
       <section id="how-it-works" class="section architecture" aria-labelledby="architecture-title">
-        <div class="architecture-copy"><p class="eyebrow">02 / Inside the orbit</p><h2 id="architecture-title">Good foundations.<br>A new direction.</h2><p>Kah builds on work from Ruby’s world and aims toward the Lua ecosystem. Each piece has one clear job.</p></div>
+        <div class="architecture-copy"><p class="eyebrow">02 / Inside the orbit</p><h2 id="architecture-title">Good foundations.<br>A new direction.</h2><p>Ruby for compiler logic. Nelua for native services. Prism for parsing. Each piece has one clear job.</p></div>
         <div class="architecture-list">
           <article class="architecture-item"><span class="item-number" aria-hidden="true">01</span><div><h3>Prism reads the Ruby.</h3><p><a href="https://github.com/ruby/prism">Prism</a>, Ruby’s parser, provides the frontend. The compiler starts with Ruby syntax and a structured AST.</p></div></article>
-          <article class="architecture-item"><span class="item-number" aria-hidden="true">02</span><div><h3>Spinel provides the starting point.</h3><p><a href="https://github.com/matz/spinel">Matz’s Spinel</a> already connects Prism to a compiler pipeline. Kah adds a Lua backend alongside that foundation.</p></div></article>
-          <article class="architecture-item"><span class="item-number" aria-hidden="true">03</span><div><h3>Lua is the destination.</h3><p>The target is portable Lua source with Lua 5.1 compatible syntax, shared by standard Lua and LuaJIT. Compile once, choose the VM.</p></div></article>
+          <article class="architecture-item"><span class="item-number" aria-hidden="true">02</span><div><h3>Spinel compiles the Ruby.</h3><p>The compiler logic is written in Ruby and compiled ahead of time by <a href="https://github.com/matz/spinel">Spinel</a>. Kah ships as a native executable.</p></div></article>
+          <article class="architecture-item"><span class="item-number" aria-hidden="true">03</span><div><h3>Nelua handles the native pieces.</h3><p><a href="https://nelua.io/">Nelua</a> owns Prism access, memory lifetimes, and process services. Kah’s compiler layer has zero handwritten C; Prism and Spinel’s runtime remain upstream dependencies. <a href="/kah/native">Read the implementation guide ↗</a></p></div></article>
+          <article class="architecture-item"><span class="item-number" aria-hidden="true">04</span><div><h3>Lua is the destination.</h3><p>The target is portable Lua source with Lua 5.1 compatible syntax, shared by standard Lua and LuaJIT. Compile once, choose the VM.</p></div></article>
         </div>
       </section>
 
       <section id="start" class="section start" aria-labelledby="start-title">
-        <div class="start-copy"><p class="eyebrow">03 / First steps</p><h2 id="start-title">A small compiler.<br>Room to grow.</h2><p>Kah is an early prototype with a working Ruby-to-Lua compiler. The same generated programs are checked against CRuby on Lua 5.1, Lua 5.4, Lua 5.5, and LuaJIT 2.1.</p>
+        <div class="start-copy"><p class="eyebrow">03 / First steps</p><h2 id="start-title">A small compiler.<br>Room to grow.</h2><p>Kah 0.2 is an early prototype with a native Ruby + Nelua compiler. The same generated programs are checked against CRuby on Lua 5.1, Lua 5.4, Lua 5.5, and LuaJIT 2.1.</p>
           <div class="command-box">
             <div class="command-header"><span class="eyebrow">Compile and run, once installed</span><button class="copy-button" type="button" id="copy-command" aria-label="Copy Kah compile and run commands">Copy</button></div>
             <pre><code><span class="prompt" aria-hidden="true">$ </span>kah hello.rb -o hello.lua
