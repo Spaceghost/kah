@@ -204,7 +204,7 @@ int emit_call_exception_arms(Compiler *c, int id, Buf *b, const NodeTable *nt, c
     /* #inspect on an exception subclass is "#<Class: message>"; the generic
        object renderer had no idea and printed "#<Object>" (#3713) */
     if (sp_streq(name, "inspect") && argc == 0 &&
-        call_target(c, -1, ty_object_class(comp_ntype(c, recv)), "inspect", CT_METHODS | CT_SHARED, NULL) < 0) {
+        call_target(c, id, ty_object_class(comp_ntype(c, recv)), name, 0, NULL) < 0) {
       buf_puts(b, "sp_exc_inspect((void *)("); emit_expr(c, recv, b); buf_puts(b, "))");
       return 1;
     }
@@ -831,6 +831,9 @@ const char *raise_fn(const char *fn) {
   static char bufs[4][96];
   static int k;
   char *o = bufs[k++ & 3];
+  /* a program with a reopened builtin exception initialize (sp_user_exc_reinit)
+     raises what it writes by the variants that leave the runtime's hook out */
+  if (g_exc_reinit_hook && (sp_streq(fn, "sp_raise_cls") || sp_streq(fn, "sp_raise"))) fn = sp_streq(fn, "sp_raise") ? "sp_raise_u" : "sp_raise_cls_u";
   if (g_raise_cz) snprintf(o, sizeof bufs[0], "%s_cz(_t%d, ", fn, g_raise_cz);
   else snprintf(o, sizeof bufs[0], "%s(", fn);
   return o;

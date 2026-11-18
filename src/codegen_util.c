@@ -918,6 +918,9 @@ int node_ivar_writes(Compiler *c, int id, int cls, int depth, IvarWriteFn add, v
     if (recv >= 0 && nt_kind(nt, recv) != NK_SelfNode) return 1;
     int mi = cls >= 0 && nm && depth < 3 ? call_target(c, id, cls, nm, 0, NULL) : -1;
     if (mi < 0 || c->scopes[mi].def_node < 0 || dispatch_impl_count(c, id, cls, nm) != 1) return 1;
+    /* the body, and the parameters' defaults, which run in the callee for
+       an argument the call leaves out (`def nxt(step = set(6))`) */
+    if (subtree_ivar_writes(c, nt_ref(nt, c->scopes[mi].def_node, "parameters"), cls, depth + 1, add, ctx)) return 1;
     if (subtree_ivar_writes(c, nt_ref(nt, c->scopes[mi].def_node, "body"), cls, depth + 1, add, ctx)) return 1;
   }
   return -1;
@@ -5633,12 +5636,12 @@ const char *default_value(TyKind t) {
 static const char *const plain_int_ops[] = {
   "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", NULL
 };
-static int plain_int_op(Compiler *c, const char *nm) {
+static int plain_int_op(Compiler *c, int id, const char *nm) {
   for (int i = 0; plain_int_ops[i]; i++)
     if (!strcmp(nm, plain_int_ops[i])) {
       /* a program that reopens Integer with the operator owns its answer */
       int ci = comp_core_class(c, CORE_INTEGER);
-      return ci < 0 || comp_method_in_chain(c, ci, nm, NULL) < 0;
+      return ci < 0 || call_target(c, id, ci, nm, 0, NULL) < 0;
     }
   return 0;
 }
@@ -5684,7 +5687,7 @@ static int plain_local(Compiler *c, LocalVar *lv, const char *name, int depth) {
     if (k == NK_LocalVariableWriteNode) ok = plain_expr(c, nt_ref(nt, w, "value"), depth + 1);
     else if (k == NK_LocalVariableOperatorWriteNode) {
       const char *op = nt_str(nt, w, "binary_operator");
-      ok = op && plain_int_op(c, op) && comp_ntype(c, w) == TY_INT;
+      ok = op && plain_int_op(c, w, op) && comp_ntype(c, w) == TY_INT;
     }
     else ok = 0;
   }
@@ -5757,7 +5760,7 @@ static int plain_expr(Compiler *c, int n, int depth) {
       if (ci >= 0 && call_target(c, n, ci, nm, 0, NULL) >= 0) return 0;
       return nm[0] == 't' ? plain_expr(c, recv, depth + 1) : 1;
     }
-    return plain_int_op(c, nm) && argc == 1 && comp_ntype(c, argv[0]) == TY_INT;
+    return plain_int_op(c, n, nm) && argc == 1 && comp_ntype(c, argv[0]) == TY_INT;
   }
   default: return 0;
   }

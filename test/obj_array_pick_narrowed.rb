@@ -103,3 +103,8 @@ p pool2.max_by(5, &:score).map(&:v), pool2.min_by(2) { |x| x.v }.map(&:v)
     p e.message
   end
 end
+
+# more than 16 kept: the buffer is cut and the kept ones are sorted whole
+# (a key whose `<=>` answers the most negative Integer: max_by_n_cut_sign.rb)
+wide = Array.new(80) { |i| (i * 37) % 80 }
+p wide.min_by(17) { |x| x }, wide.max_by(17) { |x| x * 3 }
